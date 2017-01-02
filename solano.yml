@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# bin/deploy.sh
+# Solano CI post_build hook (http://docs.solanolabs.com/Setup/setup-hooks/)
+
+### Ensure failed commands result in a failed Solano CI build ###
+set -o errexit -o pipefail
+
+### Should this build trigger a deploy? ###
+# Only deploy if all tests have passed
+if [[ "passed" != "$TDDIUM_BUILD_STATUS" ]]; then
+  echo "\$TDDIUM_BUILD_STATUS = $TDDIUM_BUILD_STATUS"
+  echo "Will only deploy on passed builds"
+  exit
+fi
+
+# Only deploy on 'master' branch
+if [[ "master" != "$TDDIUM_CURRENT_BRANCH" ]]; then
+  echo "\$TDDIUM_CURRENT_BRANCH = $TDDIUM_CURRENT_BRANCH"
+  echo "Will only depoloy on master branch"
+  exit
+fi
+
+# Only deploy on webhook-triggered builds from SCM server
+if [[ "ci" != "$TDDIUM_MODE" ]]; then
+  echo "\$TDDIUM_MODE = $TDDIUM_MODE"
+  echo "Will on deploy on ci initiated builds."
+  exit
+fi
+
+### Are all of the necessary environment variables set? ###
+required_vars="DEPLOY_APP_NAME DEPLOY_USERNAME DEPLOY_REGION DEPLOY_PASSWORD"
+vars_set=true
+for var in $required_vars; do
+  eval val=\""\$$var"\"
+  if [ "$val" == "" ]; then
+    echo "ERROR: $var is not set"
+    vars_set=false
+  fi
+done
+if [ "$vars_set" == "false" ]; then
+  echo "ERROR: Not all required environemnt variables are set"
+  echo 'See: http://docs.solanolabs.com/Setup/setting-environment-variables/#via-config-variables'
+  echo 'Please use `solano config:add <scope> <key> <value>` to set sensitive values'
+  exit 1
+fi
+
+### Ensure any needed executables are installed ###
+if [[ ! -f "$HOME/bin/deploy_command" ]]; then
+  wget -O $HOME/bin/deploy_command https://example.com/path/to/deploy_command
+  chmod +x $HOME/bin/deploy_command
+fi
+
+### Run any preparatory tasks needed for deployment ###
+# Set version in manifest file
+sed -e "s;%VERSION_PLACEHOLDER%;$TDDIUM_SESSION_ID;g" config/deploy.json.template > deploy.json
+
+# Create configuration file
+echo "[config]" > $HOME/.deploy_config
+echo "region: ${DEPLOY_REGION}" >> $HOME/.deploy_config
+
+### Deploy ###
+# Authenticate with deploy target
+deploy_command login # Presumes $DEPLOY_USERNAME and $DEPLOY_PASSWORD are pulled from environment
+
+# Execute deploy command
+deploy_command --app-name="${DEPLOY_APP_NAME}" --manifest-file=deploy.json
